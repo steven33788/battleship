@@ -1,0 +1,1188 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>雙人線上海戰棋 Battleship</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap');
+    body {
+      font-family: 'Noto Sans TC', sans-serif;
+      background-color: #0f172a;
+      color: #f8fafc;
+      user-select: none;
+    }
+    .grid-board {
+      display: grid;
+      grid-template-columns: 24px repeat(10, minmax(0, 1fr));
+      grid-template-rows: 24px repeat(10, minmax(0, 1fr));
+      gap: 2px;
+      aspect-ratio: 1 / 1;
+      width: 100%;
+      max-width: 380px;
+    }
+    .coord-label {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.72rem;
+      font-weight: 700;
+      color: #94a3b8;
+    }
+    .cell {
+      position: relative;
+      background-color: #1e293b;
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.12s ease;
+      cursor: default;
+    }
+    .cell-interactive:hover {
+      background-color: #334155;
+      cursor: pointer;
+    }
+    .cell-preview-valid {
+      background-color: rgba(56, 189, 248, 0.45) !important;
+      box-shadow: inset 0 0 0 2px #38bdf8;
+    }
+    .cell-preview-invalid {
+      background-color: rgba(244, 63, 94, 0.45) !important;
+      box-shadow: inset 0 0 0 2px #f43f5e;
+    }
+    .cell-ship {
+      background-color: #475569;
+      box-shadow: inset 0 0 0 1px #94a3b8;
+    }
+    .cell-salvo-queued {
+      background-color: rgba(245, 158, 11, 0.35) !important;
+      box-shadow: inset 0 0 0 2px #f59e0b;
+    }
+    .cell-salvo-queued::after {
+      content: '🎯';
+      font-size: 0.85rem;
+    }
+    .cell-hit {
+      background-color: #991b1b !important;
+    }
+    .cell-hit::after {
+      content: '✕';
+      color: #fca5a5;
+      font-weight: 900;
+      font-size: 1rem;
+    }
+    .cell-sunk {
+      background-color: #450a0a !important;
+      box-shadow: inset 0 0 0 2px #ef4444 !important;
+    }
+    .cell-sunk::after {
+      content: '🔥';
+      font-size: 0.85rem;
+    }
+    .cell-miss {
+      background-color: #0f172a !important;
+    }
+    .cell-miss::after {
+      content: '';
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background-color: #64748b;
+    }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col items-center justify-between p-4">
+
+  <!-- 頂部標題列 -->
+  <header class="w-full max-w-4xl flex items-center justify-between border-b border-slate-800 pb-3 mb-4">
+    <div class="flex items-center gap-2">
+      <span class="text-2xl">🚢</span>
+      <div>
+        <h1 class="text-lg sm:text-xl font-black tracking-wide text-sky-400">雙人線上海戰棋</h1>
+        <p class="text-xs text-slate-400">BATTLESHIP ONLINE</p>
+      </div>
+    </div>
+    <div id="roomHeaderInfo" class="hidden flex items-center gap-3">
+      <div class="bg-slate-800 px-3 py-1 rounded-lg border border-slate-700 text-sm">
+        房號：<span id="displayRoomCode" class="font-mono font-bold text-amber-400 text-base">----</span>
+      </div>
+      <button onclick="leaveRoom()" class="text-xs bg-rose-900/60 hover:bg-rose-800 text-rose-200 px-3 py-1.5 rounded-lg border border-rose-700/50 transition">
+        離開房間
+      </button>
+    </div>
+  </header>
+
+  <!-- 主內容區 -->
+  <main class="w-full max-w-4xl flex-1 flex flex-col items-center justify-center">
+
+    <!-- 1. 大廳畫面（僅輸入暱稱與建立/加入房號） -->
+    <section id="lobbyView" class="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl space-y-6">
+      <div class="space-y-2">
+        <label class="block text-sm font-bold text-slate-300">你的指揮官暱稱</label>
+        <input id="playerNameInput" type="text" maxlength="12" placeholder="輸入暱稱（預設：艦長）"
+          class="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2.5 text-white focus:outline-none focus:border-sky-500" />
+      </div>
+
+      <div class="pt-2 border-t border-slate-800">
+        <button onclick="createRoom()" class="w-full bg-sky-600 hover:bg-sky-500 text-white font-bold py-3 rounded-xl shadow-lg shadow-sky-900/40 transition">
+          建立房間（產生 4 碼房號）
+        </button>
+      </div>
+
+      <div class="relative flex py-1 items-center">
+        <div class="flex-grow border-t border-slate-800"></div>
+        <span class="flex-shrink mx-3 text-xs text-slate-500">或輸入房號加入等待室</span>
+        <div class="flex-grow border-t border-slate-800"></div>
+      </div>
+
+      <div class="flex gap-2">
+        <input id="joinCodeInput" type="text" maxlength="4" placeholder="輸入 4 碼房號"
+          class="flex-1 bg-slate-800 border border-slate-700 rounded-xl px-4 py-2.5 text-center font-mono text-lg tracking-widest uppercase text-amber-400 focus:outline-none focus:border-amber-500" />
+        <button onclick="joinRoom()" class="bg-amber-600 hover:bg-amber-500 text-white font-bold px-6 py-2.5 rounded-xl transition">
+          加入
+        </button>
+      </div>
+
+      <p id="lobbyError" class="text-center text-sm text-rose-400 min-h-[20px]"></p>
+    </section>
+
+    <!-- 2. 等待室畫面（雙方集結 + 規則模式選擇） -->
+    <section id="waitingView" class="hidden w-full max-w-lg bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl space-y-6">
+      <div class="text-center space-y-1">
+        <span class="text-xs font-bold uppercase tracking-wider text-sky-400">作戰指揮等待室</span>
+        <h2 class="text-2xl font-black text-white">房號：<span id="waitRoomCode" class="font-mono text-amber-400">----</span></h2>
+        <p class="text-xs text-slate-400">將 4 碼房號分享給好友即可加入</p>
+      </div>
+
+      <!-- 雙方玩家席位卡片 -->
+      <div class="grid grid-cols-2 gap-3">
+        <div class="bg-slate-800/80 border border-sky-700/50 rounded-xl p-4 text-center space-y-1">
+          <div class="text-xs text-sky-400 font-bold">房主 (1P)</div>
+          <div id="waitHostName" class="text-base font-black text-white truncate">-</div>
+          <div class="text-xs text-emerald-400">● 已連線</div>
+        </div>
+        <div id="waitGuestCard" class="bg-slate-800/40 border border-slate-700 border-dashed rounded-xl p-4 text-center space-y-1">
+          <div class="text-xs text-amber-400 font-bold">挑戰者 (2P)</div>
+          <div id="waitGuestName" class="text-base font-black text-slate-400 truncate">等待加入...</div>
+          <div id="waitGuestStatus" class="text-xs text-slate-500">○ 尚未入房</div>
+        </div>
+      </div>
+
+      <!-- 遊戲模式選擇區 -->
+      <div class="space-y-2.5 pt-2 border-t border-slate-800">
+        <div class="flex items-center justify-between">
+          <span class="text-sm font-bold text-slate-200">選擇對戰規則模式</span>
+          <span id="modeSelectorHint" class="text-xs text-slate-400">房主可切換模式</span>
+        </div>
+
+        <div class="grid grid-cols-1 gap-2.5" id="modeOptionsGroup">
+          <button type="button" data-mode="normal" onclick="selectRuleMode('normal')"
+            class="mode-card text-left p-3.5 rounded-xl border transition flex items-start justify-between gap-3 bg-slate-800 border-slate-700">
+            <div>
+              <div class="font-bold text-sm text-white flex items-center gap-2">
+                <span>🎯 一般模式</span>
+              </div>
+              <p class="text-xs text-slate-400 mt-0.5">雙方每回合輪流發射 1 發砲彈，經典標準節奏。</p>
+            </div>
+            <span class="mode-check text-sky-400 font-bold text-sm hidden">✔ 已選</span>
+          </button>
+
+          <button type="button" data-mode="streak" onclick="selectRuleMode('streak')"
+            class="mode-card text-left p-3.5 rounded-xl border transition flex items-start justify-between gap-3 bg-slate-800 border-slate-700">
+            <div>
+              <div class="font-bold text-sm text-white flex items-center gap-2">
+                <span>🔥 連射模式</span>
+              </div>
+              <p class="text-xs text-slate-400 mt-0.5">命中敵艦可繼續連續開火，直到射偏落空才換對手。</p>
+            </div>
+            <span class="mode-check text-sky-400 font-bold text-sm hidden">✔ 已選</span>
+          </button>
+
+          <button type="button" data-mode="salvo" onclick="selectRuleMode('salvo')"
+            class="mode-card text-left p-3.5 rounded-xl border transition flex items-start justify-between gap-3 bg-slate-800 border-slate-700">
+            <div>
+              <div class="font-bold text-sm text-white flex items-center gap-2">
+                <span>🚀 齊射模式（Salvo）</span>
+              </div>
+              <p class="text-xs text-slate-400 mt-0.5">每回合發射數＝己方存活船艦數（開局 5 連發，隨船艦沉沒遞減）。</p>
+            </div>
+            <span class="mode-check text-sky-400 font-bold text-sm hidden">✔ 已選</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- 開始進入佈陣按鈕 -->
+      <div class="pt-2">
+        <button id="startSetupBtn" onclick="startSetupPhase()" disabled
+          class="w-full bg-emerald-600 disabled:bg-slate-800 disabled:text-slate-500 hover:bg-emerald-500 text-white font-bold py-3.5 rounded-xl shadow-lg transition">
+          等待對手加入後即可開始...
+        </button>
+      </div>
+    </section>
+
+    <!-- 3. 遊戲戰場畫面（佈陣 / 對戰 / 結算） -->
+    <section id="gameView" class="hidden w-full space-y-4">
+      
+      <!-- 狀態橫幅 -->
+      <div class="bg-slate-900 border border-slate-800 rounded-xl p-3 sm:p-4 flex flex-col sm:flex-row items-center justify-between gap-3">
+        <div class="flex items-center gap-3">
+          <div id="statusBadge" class="px-3 py-1 rounded-full text-xs font-bold bg-sky-900/60 text-sky-300 border border-sky-700">
+            連線中
+          </div>
+          <span id="statusText" class="text-sm sm:text-base font-bold text-slate-100">部署艦隊中...</span>
+        </div>
+        <div class="flex items-center gap-3 text-xs sm:text-sm text-slate-400">
+          <span>我方：<strong id="myDisplayName" class="text-sky-400">-</strong></span>
+          <span>對手：<strong id="oppDisplayName" class="text-amber-400">-</strong></span>
+          <span id="ruleBadge" class="bg-slate-800 px-2.5 py-0.5 rounded text-sky-300 font-bold border border-slate-700">一般模式</span>
+        </div>
+      </div>
+
+      <!-- 佈陣控制列（僅佈陣階段顯示） -->
+      <div id="setupControls" class="bg-slate-900/90 border border-sky-800/60 rounded-xl p-4 space-y-3">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div class="text-sm font-bold text-sky-300">
+            部署你的艦隊（點擊下方船隻後，在左側棋盤放置）
+          </div>
+          <div class="flex flex-wrap gap-2">
+            <button onclick="toggleOrientation()" class="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold px-3 py-1.5 rounded-lg border border-slate-600">
+              方向：<span id="orientationLabel" class="text-amber-400">水平 →</span> (R鍵)
+            </button>
+            <button onclick="randomizeFleet()" class="bg-indigo-700 hover:bg-indigo-600 text-white text-xs font-bold px-3 py-1.5 rounded-lg">
+              隨機佈陣
+            </button>
+            <button onclick="clearFleet()" class="bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold px-3 py-1.5 rounded-lg">
+              清空
+            </button>
+          </div>
+        </div>
+
+        <div id="shipSelector" class="grid grid-cols-2 sm:grid-cols-5 gap-2"></div>
+
+        <div class="flex justify-end pt-1">
+          <button id="readyBtn" onclick="confirmSetup()" disabled
+            class="bg-emerald-600 disabled:bg-slate-700 disabled:text-slate-500 hover:bg-emerald-500 text-white font-bold px-6 py-2 rounded-xl transition">
+            完成佈陣並準備就緒
+          </button>
+        </div>
+      </div>
+
+      <!-- 齊射模式專用瞄準發射列 -->
+      <div id="salvoControls" class="hidden bg-amber-950/40 border border-amber-600/60 rounded-xl p-3 flex flex-col sm:flex-row items-center justify-between gap-3">
+        <div class="text-sm font-bold text-amber-300">
+          🚀 齊射瞄準中：已鎖定 <span id="salvoCountText" class="text-white text-base font-mono">0 / 5</span> 個目標（點擊已鎖定格可取消）
+        </div>
+        <div class="flex items-center gap-2 w-full sm:w-auto justify-end">
+          <button onclick="clearSalvoTargets()" class="bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold px-3 py-2 rounded-lg border border-slate-600">
+            重選目標
+          </button>
+          <button id="fireSalvoBtn" onclick="fireSalvo()" disabled
+            class="bg-amber-600 disabled:bg-slate-800 disabled:text-slate-500 hover:bg-amber-500 text-white text-sm font-black px-5 py-2 rounded-lg shadow transition">
+            確認齊射！
+          </button>
+        </div>
+      </div>
+
+      <!-- 雙棋盤主區 -->
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6 justify-items-center">
+        
+        <!-- 左盤：我方海域 -->
+        <div class="w-full max-w-[380px] bg-slate-900 border border-slate-800 rounded-2xl p-3 sm:p-4 flex flex-col items-center">
+          <div class="w-full flex items-center justify-between mb-2">
+            <span class="text-sm font-bold text-sky-400">🛡️ 我方海域</span>
+            <span id="myFleetStatus" class="text-xs text-slate-400">存活船艦：5 / 5</span>
+          </div>
+          <div id="myBoard" class="grid-board"></div>
+        </div>
+
+        <!-- 右盤：敵方雷達 -->
+        <div class="w-full max-w-[380px] bg-slate-900 border border-slate-800 rounded-2xl p-3 sm:p-4 flex flex-col items-center">
+          <div class="w-full flex items-center justify-between mb-2">
+            <span class="text-sm font-bold text-rose-400">🎯 敵方雷達（點擊開火）</span>
+            <span id="oppFleetStatus" class="text-xs text-slate-400">敵艦剩餘：5 / 5</span>
+          </div>
+          <div id="oppBoard" class="grid-board"></div>
+        </div>
+
+      </div>
+
+      <!-- 戰況紀錄與結算雙按鈕區 -->
+      <div class="bg-slate-900 border border-slate-800 rounded-xl p-3.5 flex flex-col sm:flex-row items-center justify-between gap-3">
+        <div id="lastActionLog" class="text-xs sm:text-sm text-slate-200 leading-relaxed">
+          提示：可按鍵盤 <kbd class="px-1.5 py-0.5 bg-slate-800 rounded border border-slate-700">R</kbd> 旋轉船隻方向。
+        </div>
+        <div id="postGameActions" class="hidden flex flex-wrap items-center gap-2 shrink-0">
+          <button onclick="rematchSameRules()" class="bg-emerald-600 hover:bg-emerald-500 text-white text-xs sm:text-sm font-bold px-4 py-2 rounded-xl transition">
+            原規則再一局
+          </button>
+          <button onclick="returnToWaitingRoom()" class="bg-slate-700 hover:bg-slate-600 text-amber-300 border border-slate-600 text-xs sm:text-sm font-bold px-4 py-2 rounded-xl transition">
+            回等待室
+          </button>
+        </div>
+      </div>
+
+    </section>
+  </main>
+
+  <footer class="w-full max-w-4xl text-center text-xs text-slate-600 mt-6 pb-2">
+    雙人線上海戰棋 • 支援一般 / 連射 / 齊射三種模式
+  </footer>
+
+  <!-- Firebase SDK -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+    import { getFirestore, doc, setDoc, getDoc, updateDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+    // =========================================================================
+    // 請在此填入你的 Firebase 專案設定（與你其他遊戲的設定相同即可）
+    // =========================================================================
+    const STANDALONE_FIREBASE_CONFIG = {
+      apiKey: "AIzaSyDj4ItC7_2WLOu4Lw1ch2ca5jjjWZAyaIw",
+      authDomain: "battleship-65429.firebaseapp.com",
+      projectId: "battleship-65429",
+      storageBucket: "battleship-65429.firebasestorage.app",
+      messagingSenderId: "188285143211",
+      appId: "1:188285143211:web:19d2a70fe65031eb0f8fee",
+      measurementId: "G-JH4QF3YHZF"
+    };
+
+    const COLLECTION_NAME = "battleship_rooms";
+    const FLEET_SPEC = [
+      { id: "carrier", name: "航空母艦", size: 5 },
+      { id: "battleship", name: "戰艦", size: 4 },
+      { id: "cruiser", name: "巡洋艦", size: 3 },
+      { id: "submarine", name: "潛艇", size: 3 },
+      { id: "destroyer", name: "驅逐艦", size: 2 }
+    ];
+    const RULE_LABELS = {
+      normal: "一般模式",
+      streak: "連射模式",
+      salvo: "齊射模式"
+    };
+    const COLS = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"];
+
+    let db = null;
+    let roomCode = null;
+    let playerRole = null; // "host" | "guest"
+    let unsubRoom = null;
+    let currentRoomData = null;
+    let lastResetToken = null;
+
+    // 本地佈陣與齊射狀態
+    let placedShips = {};
+    let selectedShipId = "carrier";
+    let isHorizontal = true;
+    let hoverCells = [];
+    let salvoQueue = []; // 齊射模式暫存座標 ["0,0", ...]
+
+    function initFirebase() {
+      if (!STANDALONE_FIREBASE_CONFIG.apiKey || STANDALONE_FIREBASE_CONFIG.apiKey === "YOUR_API_KEY") {
+        document.getElementById("lobbyError").textContent = "⚠️ 尚未設定 STANDALONE_FIREBASE_CONFIG，請先填入你的 Firebase 金鑰。";
+        return false;
+      }
+      if (!db) {
+        const app = initializeApp(STANDALONE_FIREBASE_CONFIG);
+        db = getFirestore(app);
+      }
+      return true;
+    }
+
+    // 計算某玩家目前尚未沉沒的船艦數量
+    function getAliveShipCount(ships, enemyShots) {
+      if (!ships || ships.length === 0) return 5;
+      const shotSet = new Set(enemyShots || []);
+      let alive = 0;
+      for (const s of ships) {
+        const isSunk = s.cells.every(c => shotSet.has(c));
+        if (!isSunk) alive++;
+      }
+      return alive;
+    }
+
+    // 建立棋盤 DOM
+    function buildBoardsDOM() {
+      ["myBoard", "oppBoard"].forEach(boardId => {
+        const container = document.getElementById(boardId);
+        container.innerHTML = "";
+        const corner = document.createElement("div");
+        corner.className = "coord-label";
+        container.appendChild(corner);
+
+        COLS.forEach(c => {
+          const lbl = document.createElement("div");
+          lbl.className = "coord-label";
+          lbl.textContent = c;
+          container.appendChild(lbl);
+        });
+
+        for (let r = 0; r < 10; r++) {
+          const rowLbl = document.createElement("div");
+          rowLbl.className = "coord-label";
+          rowLbl.textContent = r + 1;
+          container.appendChild(rowLbl);
+
+          for (let c = 0; c < 10; c++) {
+            const cell = document.createElement("div");
+            cell.className = "cell";
+            cell.dataset.r = r;
+            cell.dataset.c = c;
+            if (boardId === "myBoard") {
+              cell.addEventListener("mouseenter", () => handleMyBoardHover(r, c));
+              cell.addEventListener("mouseleave", () => clearHoverPreview());
+              cell.addEventListener("click", () => handleMyBoardClick(r, c));
+            } else {
+              cell.addEventListener("click", () => handleOppBoardClick(r, c));
+            }
+            container.appendChild(cell);
+          }
+        }
+      });
+    }
+
+    // 渲染船隻選擇按鈕
+    function renderShipSelector() {
+      const container = document.getElementById("shipSelector");
+      container.innerHTML = "";
+      FLEET_SPEC.forEach(ship => {
+        const isPlaced = Boolean(placedShips[ship.id]);
+        const isSelected = selectedShipId === ship.id;
+        const btn = document.createElement("button");
+        btn.className = `p-2 rounded-lg border text-left transition flex flex-col justify-between ${
+          isSelected
+            ? "bg-sky-900/70 border-sky-400 text-white"
+            : isPlaced
+            ? "bg-slate-800/60 border-emerald-700/60 text-slate-300"
+            : "bg-slate-800 border-slate-700 text-slate-300 hover:border-slate-500"
+        }`;
+        btn.innerHTML = `
+          <div class="flex items-center justify-between w-full text-xs font-bold">
+            <span>${ship.name}</span>
+            <span>${isPlaced ? "✅" : `${ship.size}格`}</span>
+          </div>
+          <div class="flex gap-1 mt-1.5">
+            ${Array(ship.size).fill(`<span class="h-2 flex-1 rounded-sm ${isPlaced ? "bg-emerald-500" : "bg-sky-400"}"></span>`).join("")}
+          </div>
+        `;
+        btn.onclick = () => {
+          selectedShipId = ship.id;
+          renderShipSelector();
+        };
+        container.appendChild(btn);
+      });
+
+      const allPlaced = Object.keys(placedShips).length === FLEET_SPEC.length;
+      const isMeReady = currentRoomData && currentRoomData[playerRole]?.ready;
+      const readyBtn = document.getElementById("readyBtn");
+      readyBtn.disabled = !allPlaced || isMeReady;
+      readyBtn.textContent = isMeReady ? "已就緒，等待對手..." : "完成佈陣並準備就緒";
+    }
+
+    function computeShipCells(r, c, size, horizontal) {
+      const cells = [];
+      for (let i = 0; i < size; i++) {
+        const nr = horizontal ? r : r + i;
+        const nc = horizontal ? c + i : c;
+        if (nr < 0 || nr >= 10 || nc < 0 || nc >= 10) return null;
+        cells.push(`${nr},${nc}`);
+      }
+      return cells;
+    }
+
+    function hasCollision(cells, ignoreShipId) {
+      const occupied = new Set();
+      Object.values(placedShips).forEach(s => {
+        if (s.id !== ignoreShipId) {
+          s.cells.forEach(coord => occupied.add(coord));
+        }
+      });
+      return cells.some(coord => occupied.has(coord));
+    }
+
+    function handleMyBoardHover(r, c) {
+      if (!currentRoomData || currentRoomData.phase !== "setup" || currentRoomData[playerRole]?.ready) return;
+      clearHoverPreview();
+      const spec = FLEET_SPEC.find(s => s.id === selectedShipId);
+      if (!spec) return;
+
+      const cells = computeShipCells(r, c, spec.size, isHorizontal);
+      if (!cells) {
+        const cellEl = document.querySelector(`#myBoard .cell[data-r="${r}"][data-c="${c}"]`);
+        if (cellEl) {
+          cellEl.classList.add("cell-preview-invalid");
+          hoverCells.push(cellEl);
+        }
+        return;
+      }
+
+      const valid = !hasCollision(cells, spec.id);
+      cells.forEach(coord => {
+        const [cr, cc] = coord.split(",");
+        const cellEl = document.querySelector(`#myBoard .cell[data-r="${cr}"][data-c="${cc}"]`);
+        if (cellEl) {
+          cellEl.classList.add(valid ? "cell-preview-valid" : "cell-preview-invalid");
+          hoverCells.push(cellEl);
+        }
+      });
+    }
+
+    function clearHoverPreview() {
+      hoverCells.forEach(el => {
+        el.classList.remove("cell-preview-valid", "cell-preview-invalid");
+      });
+      hoverCells = [];
+    }
+
+    function handleMyBoardClick(r, c) {
+      if (!currentRoomData || currentRoomData.phase !== "setup" || currentRoomData[playerRole]?.ready) return;
+      const spec = FLEET_SPEC.find(s => s.id === selectedShipId);
+      if (!spec) return;
+
+      const cells = computeShipCells(r, c, spec.size, isHorizontal);
+      if (!cells || hasCollision(cells, spec.id)) return;
+
+      placedShips[spec.id] = {
+        id: spec.id,
+        name: spec.name,
+        size: spec.size,
+        cells
+      };
+
+      const nextUnplaced = FLEET_SPEC.find(s => !placedShips[s.id]);
+      if (nextUnplaced) selectedShipId = nextUnplaced.id;
+
+      clearHoverPreview();
+      renderShipSelector();
+      renderBoards();
+    }
+
+    window.toggleOrientation = function () {
+      isHorizontal = !isHorizontal;
+      document.getElementById("orientationLabel").textContent = isHorizontal ? "水平 →" : "垂直 ↓";
+    };
+
+    window.randomizeFleet = function () {
+      if (currentRoomData && currentRoomData[playerRole]?.ready) return;
+      placedShips = {};
+      for (const spec of FLEET_SPEC) {
+        let placed = false;
+        let attempts = 0;
+        while (!placed && attempts < 200) {
+          attempts++;
+          const horiz = Math.random() < 0.5;
+          const r = Math.floor(Math.random() * 10);
+          const c = Math.floor(Math.random() * 10);
+          const cells = computeShipCells(r, c, spec.size, horiz);
+          if (cells && !hasCollision(cells, spec.id)) {
+            placedShips[spec.id] = { id: spec.id, name: spec.name, size: spec.size, cells };
+            placed = true;
+          }
+        }
+      }
+      renderShipSelector();
+      renderBoards();
+    };
+
+    window.clearFleet = function () {
+      if (currentRoomData && currentRoomData[playerRole]?.ready) return;
+      placedShips = {};
+      selectedShipId = FLEET_SPEC[0].id;
+      renderShipSelector();
+      renderBoards();
+    };
+
+    window.addEventListener("keydown", (e) => {
+      if (e.key.toLowerCase() === "r") {
+        window.toggleOrientation();
+      }
+    });
+
+    // 等待室：房主切換規則模式
+    window.selectRuleMode = async function (mode) {
+      if (playerRole !== "host" || !roomCode) return;
+      const roomRef = doc(db, COLLECTION_NAME, roomCode);
+      await updateDoc(roomRef, { ruleMode: mode });
+    };
+
+    // 等待室：房主點擊開始進入佈陣
+    window.startSetupPhase = async function () {
+      if (playerRole !== "host" || !currentRoomData?.guest) return;
+      const roomRef = doc(db, COLLECTION_NAME, roomCode);
+      await updateDoc(roomRef, {
+        phase: "setup",
+        turn: null,
+        winner: null,
+        resetToken: Date.now(),
+        lastLog: `⚓ 已進入部署階段（模式：${RULE_LABELS[currentRoomData.ruleMode]}），請在左側棋盤配置 5 艘軍艦。`,
+        "host.ready": false,
+        "host.ships": [],
+        "host.shots": [],
+        "guest.ready": false,
+        "guest.ships": [],
+        "guest.shots": []
+      });
+    };
+
+    // 確認佈陣並上傳 Firestore
+    window.confirmSetup = async function () {
+      if (Object.keys(placedShips).length !== FLEET_SPEC.length) return;
+      const roomRef = doc(db, COLLECTION_NAME, roomCode);
+      const shipsArray = Object.values(placedShips);
+
+      const snap = await getDoc(roomRef);
+      if (!snap.exists()) return;
+      const data = snap.data();
+      const oppRole = playerRole === "host" ? "guest" : "host";
+      const oppReady = data[oppRole]?.ready === true;
+
+      const updates = {
+        [`${playerRole}.ships`]: shipsArray,
+        [`${playerRole}.ready`]: true
+      };
+
+      if (oppReady) {
+        const firstTurn = Math.random() < 0.5 ? "host" : "guest";
+        const firstPlayerName = data[firstTurn]?.name || "玩家";
+        updates.phase = "playing";
+        updates.turn = firstTurn;
+        updates.lastLog = `🎲 系統隨機抽選：由「${firstPlayerName}」率先開火！`;
+      }
+
+      await updateDoc(roomRef, updates);
+    };
+
+    // 取得目前本回合齊射所需發數（等於己方存活船艦數，且不超過敵方剩餘未開火格數）
+    function getRequiredSalvoCount() {
+      if (!currentRoomData) return 1;
+      const me = currentRoomData[playerRole];
+      const oppRole = playerRole === "host" ? "guest" : "host";
+      const opp = currentRoomData[oppRole];
+      const myAlive = getAliveShipCount(me?.ships, opp?.shots);
+      const remainingCells = 100 - (me?.shots?.length || 0);
+      return Math.max(1, Math.min(myAlive, remainingCells));
+    }
+
+    // 點擊敵方雷達（一般/連射立即發射；齊射加入目標佇列）
+    async function handleOppBoardClick(r, c) {
+      if (!currentRoomData || currentRoomData.phase !== "playing") return;
+      if (currentRoomData.turn !== playerRole) return;
+
+      const coord = `${r},${c}`;
+      const me = currentRoomData[playerRole];
+      const myShots = me.shots || [];
+      if (myShots.includes(coord)) return;
+
+      // 齊射模式：切換選取目標
+      if (currentRoomData.ruleMode === "salvo") {
+        const maxShots = getRequiredSalvoCount();
+        const idx = salvoQueue.indexOf(coord);
+        if (idx >= 0) {
+          salvoQueue.splice(idx, 1);
+        } else if (salvoQueue.length < maxShots) {
+          salvoQueue.push(coord);
+        }
+        updateSalvoUI();
+        renderBoards();
+        return;
+      }
+
+      // 一般模式 / 連射模式：單發立即結算
+      await executeShots([coord]);
+    }
+
+    window.clearSalvoTargets = function () {
+      salvoQueue = [];
+      updateSalvoUI();
+      renderBoards();
+    };
+
+    window.fireSalvo = async function () {
+      if (!currentRoomData || currentRoomData.phase !== "playing") return;
+      if (currentRoomData.turn !== playerRole) return;
+      const required = getRequiredSalvoCount();
+      if (salvoQueue.length !== required) return;
+
+      const targets = [...salvoQueue];
+      salvoQueue = [];
+      updateSalvoUI();
+      await executeShots(targets);
+    };
+
+    // 統一結算單發或多發齊射邏輯
+    async function executeShots(targetCoords) {
+      const me = currentRoomData[playerRole];
+      const oppRole = playerRole === "host" ? "guest" : "host";
+      const opp = currentRoomData[oppRole];
+
+      const prevShots = new Set(me.shots || []);
+      const newShots = [...(me.shots || []), ...targetCoords];
+      const shotSet = new Set(newShots);
+
+      let hitCount = 0;
+      const sunkShipNames = [];
+      const coordLabels = targetCoords.map(c => {
+        const [rr, cc] = c.split(",").map(Number);
+        return `${COLS[cc]}${rr + 1}`;
+      });
+
+      // 統計命中數
+      for (const coord of targetCoords) {
+        const isHit = opp.ships.some(ship => ship.cells.includes(coord));
+        if (isHit) hitCount++;
+      }
+
+      // 檢查哪些船是在這一輪新被擊沉的
+      for (const ship of opp.ships) {
+        const wasSunkBefore = ship.cells.every(cell => prevShots.has(cell));
+        const isSunkNow = ship.cells.every(cell => shotSet.has(cell));
+        if (!wasSunkBefore && isSunkNow) {
+          sunkShipNames.push(ship.name);
+        }
+      }
+
+      const allSunk = opp.ships.every(ship => ship.cells.every(cell => shotSet.has(cell)));
+      let nextTurn = oppRole;
+      let nextPhase = "playing";
+      let winner = null;
+      let logMsg = "";
+
+      if (currentRoomData.ruleMode === "salvo") {
+        const sunkText = sunkShipNames.length > 0 ? `，擊沉【${sunkShipNames.join("、")}】！` : "。";
+        logMsg = `🚀 ${me.name} 發動 ${targetCoords.length} 連齊射（${coordLabels.join(", ")}）—— 命中 ${hitCount} 發${sunkText}`;
+      } else {
+        const cLabel = coordLabels[0];
+        if (hitCount > 0) {
+          if (sunkShipNames.length > 0) {
+            logMsg = `💥 ${me.name} 攻擊 ${cLabel} —— 擊沉了敵方的【${sunkShipNames[0]}】！`;
+          } else {
+            logMsg = `🔥 ${me.name} 攻擊 ${cLabel} —— 命中敵艦！`;
+          }
+        } else {
+          logMsg = `💦 ${me.name} 攻擊 ${cLabel} —— 落空（未命中）。`;
+        }
+      }
+
+      if (allSunk) {
+        nextPhase = "finished";
+        winner = playerRole;
+        logMsg = `🏆 ${me.name} 殲滅了敵方最後的艦隊（${coordLabels.join(", ")}），獲得最終勝利！`;
+      } else if (currentRoomData.ruleMode === "streak" && hitCount > 0) {
+        nextTurn = playerRole;
+        logMsg += "（命中連擊，繼續開火！）";
+      }
+
+      const roomRef = doc(db, COLLECTION_NAME, roomCode);
+      await updateDoc(roomRef, {
+        [`${playerRole}.shots`]: newShots,
+        turn: nextTurn,
+        phase: nextPhase,
+        winner: winner,
+        lastLog: logMsg
+      });
+    }
+
+    function updateSalvoUI() {
+      const salvoBar = document.getElementById("salvoControls");
+      const isMySalvoTurn =
+        currentRoomData?.phase === "playing" &&
+        currentRoomData?.ruleMode === "salvo" &&
+        currentRoomData?.turn === playerRole;
+
+      if (!isMySalvoTurn) {
+        salvoBar.classList.add("hidden");
+        return;
+      }
+
+      salvoBar.classList.remove("hidden");
+      const required = getRequiredSalvoCount();
+      // 若存活船數減少導致佇列超過上限，自動裁切
+      if (salvoQueue.length > required) {
+        salvoQueue = salvoQueue.slice(0, required);
+      }
+      document.getElementById("salvoCountText").textContent = `${salvoQueue.length} / ${required}`;
+      document.getElementById("fireSalvoBtn").disabled = salvoQueue.length !== required;
+    }
+
+    // 渲染雙方棋盤畫面
+    function renderBoards() {
+      const me = currentRoomData?.[playerRole];
+      const oppRole = playerRole === "host" ? "guest" : "host";
+      const opp = currentRoomData?.[oppRole];
+
+      // 1. 我方海域
+      const myShipCells = new Set();
+      const myShipsSource = me?.ready && me?.ships?.length ? me.ships : Object.values(placedShips);
+      myShipsSource.forEach(s => s.cells.forEach(c => myShipCells.add(c)));
+
+      const oppShots = new Set(opp?.shots || []);
+      const mySunkCells = new Set();
+      let myAliveCount = 0;
+
+      myShipsSource.forEach(s => {
+        const isSunk = oppShots.size > 0 && s.cells.every(c => oppShots.has(c));
+        if (isSunk) {
+          s.cells.forEach(c => mySunkCells.add(c));
+        } else {
+          myAliveCount++;
+        }
+      });
+
+      document.querySelectorAll("#myBoard .cell").forEach(cell => {
+        const coord = `${cell.dataset.r},${cell.dataset.c}`;
+        cell.className = "cell";
+        if (currentRoomData?.phase === "setup" && !me?.ready) {
+          cell.classList.add("cell-interactive");
+        }
+        if (myShipCells.has(coord)) {
+          cell.classList.add("cell-ship");
+        }
+        if (mySunkCells.has(coord)) {
+          cell.classList.add("cell-sunk");
+        } else if (oppShots.has(coord)) {
+          cell.classList.add(myShipCells.has(coord) ? "cell-hit" : "cell-miss");
+        }
+      });
+      document.getElementById("myFleetStatus").textContent = `存活船艦：${myAliveCount} / 5`;
+
+      // 2. 敵方雷達
+      const myShots = new Set(me?.shots || []);
+      const oppShips = opp?.ships || [];
+      const oppShipCells = new Set();
+      const oppSunkCells = new Set();
+      let oppAliveCount = 5;
+
+      if (oppShips.length > 0) {
+        oppAliveCount = 0;
+        oppShips.forEach(s => {
+          s.cells.forEach(c => oppShipCells.add(c));
+          const isSunk = s.cells.every(c => myShots.has(c));
+          if (isSunk) {
+            s.cells.forEach(c => oppSunkCells.add(c));
+          } else {
+            oppAliveCount++;
+          }
+        });
+      }
+
+      const canShoot = currentRoomData?.phase === "playing" && currentRoomData?.turn === playerRole;
+      const queuedSet = new Set(salvoQueue);
+
+      document.querySelectorAll("#oppBoard .cell").forEach(cell => {
+        const coord = `${cell.dataset.r},${cell.dataset.c}`;
+        cell.className = "cell";
+        const alreadyShot = myShots.has(coord);
+
+        if (canShoot && !alreadyShot) {
+          cell.classList.add("cell-interactive");
+        }
+        if (queuedSet.has(coord) && !alreadyShot) {
+          cell.classList.add("cell-salvo-queued");
+        }
+        if (currentRoomData?.phase === "finished" && oppShipCells.has(coord) && !alreadyShot) {
+          cell.classList.add("cell-ship");
+        }
+        if (oppSunkCells.has(coord)) {
+          cell.classList.add("cell-sunk");
+        } else if (alreadyShot) {
+          cell.classList.add(oppShipCells.has(coord) ? "cell-hit" : "cell-miss");
+        }
+      });
+      document.getElementById("oppFleetStatus").textContent = `敵艦剩餘：${oppAliveCount} / 5`;
+    }
+
+    // 渲染等待室 UI
+    function renderWaitingRoom(data) {
+      document.getElementById("waitRoomCode").textContent = roomCode;
+      document.getElementById("waitHostName").textContent = data.host?.name || "房主";
+
+      const guestCard = document.getElementById("waitGuestCard");
+      const guestNameEl = document.getElementById("waitGuestName");
+      const guestStatusEl = document.getElementById("waitGuestStatus");
+
+      if (data.guest) {
+        guestCard.className = "bg-slate-800/80 border border-amber-600/50 rounded-xl p-4 text-center space-y-1";
+        guestNameEl.textContent = data.guest.name;
+        guestNameEl.className = "text-base font-black text-white truncate";
+        guestStatusEl.textContent = "● 已連線";
+        guestStatusEl.className = "text-xs text-emerald-400";
+      } else {
+        guestCard.className = "bg-slate-800/40 border border-slate-700 border-dashed rounded-xl p-4 text-center space-y-1";
+        guestNameEl.textContent = "等待加入...";
+        guestNameEl.className = "text-base font-black text-slate-400 truncate";
+        guestStatusEl.textContent = "○ 尚未入房";
+        guestStatusEl.className = "text-xs text-slate-500";
+      }
+
+      // 更新模式卡片選中狀態與操作權限
+      const isHost = playerRole === "host";
+      document.getElementById("modeSelectorHint").textContent = isHost ? "你是房主，可切換模式" : "由房主選擇模式（即時同步）";
+
+      document.querySelectorAll(".mode-card").forEach(card => {
+        const isSelected = card.dataset.mode === data.ruleMode;
+        const checkEl = card.querySelector(".mode-check");
+        if (isSelected) {
+          card.className = "mode-card text-left p-3.5 rounded-xl border transition flex items-start justify-between gap-3 bg-sky-950/60 border-sky-400 shadow-md";
+          checkEl.classList.remove("hidden");
+        } else {
+          card.className = `mode-card text-left p-3.5 rounded-xl border transition flex items-start justify-between gap-3 bg-slate-800/70 border-slate-700 ${isHost ? "hover:border-slate-500 cursor-pointer" : "opacity-65 cursor-default"}`;
+          checkEl.classList.add("hidden");
+        }
+      });
+
+      const startBtn = document.getElementById("startSetupBtn");
+      if (!isHost) {
+        startBtn.disabled = true;
+        startBtn.textContent = data.guest ? "等待房主開始部署艦隊..." : "等待連線中...";
+      } else if (!data.guest) {
+        startBtn.disabled = true;
+        startBtn.textContent = "等待對手加入後即可開始...";
+      } else {
+        startBtn.disabled = false;
+        startBtn.textContent = `開始對戰（${RULE_LABELS[data.ruleMode]}）`;
+      }
+    }
+
+    // 同步房間資料切換畫面與更新狀態
+    function handleRoomSnapshot(data) {
+      // 偵測新開局重置訊號，清空本地暫存佈陣與齊射佇列
+      if (data.resetToken && data.resetToken !== lastResetToken) {
+        lastResetToken = data.resetToken;
+        placedShips = {};
+        selectedShipId = "carrier";
+        salvoQueue = [];
+      }
+
+      currentRoomData = data;
+      document.getElementById("displayRoomCode").textContent = roomCode;
+
+      const lobbyView = document.getElementById("lobbyView");
+      const waitingView = document.getElementById("waitingView");
+      const gameView = document.getElementById("gameView");
+
+      lobbyView.classList.add("hidden");
+
+      if (data.phase === "waiting") {
+        waitingView.classList.remove("hidden");
+        gameView.classList.add("hidden");
+        renderWaitingRoom(data);
+        return;
+      }
+
+      // 進入 setup / playing / finished 戰場畫面
+      waitingView.classList.add("hidden");
+      gameView.classList.remove("hidden");
+
+      const me = data[playerRole];
+      const oppRole = playerRole === "host" ? "guest" : "host";
+      const opp = data[oppRole];
+
+      document.getElementById("myDisplayName").textContent = me?.name || "-";
+      document.getElementById("oppDisplayName").textContent = opp ? opp.name : "等待加入...";
+      document.getElementById("ruleBadge").textContent = RULE_LABELS[data.ruleMode] || "一般模式";
+
+      if (data.lastLog) {
+        document.getElementById("lastActionLog").textContent = data.lastLog;
+      }
+
+      const setupControls = document.getElementById("setupControls");
+      const postGameActions = document.getElementById("postGameActions");
+      const statusBadge = document.getElementById("statusBadge");
+      const statusText = document.getElementById("statusText");
+
+      if (data.phase === "setup") {
+        setupControls.classList.remove("hidden");
+        postGameActions.classList.add("hidden");
+        statusBadge.className = "px-3 py-1 rounded-full text-xs font-bold bg-amber-900/60 text-amber-300 border border-amber-700";
+        statusBadge.textContent = "佈陣階段";
+
+        if (me?.ready && !opp?.ready) {
+          statusText.textContent = `你已完成佈陣，等待「${opp?.name || "對手"}」部署艦隊...`;
+        } else if (!me?.ready && opp?.ready) {
+          statusText.textContent = `「${opp.name}」已準備就緒！請盡快完成你的佈陣`;
+        } else {
+          statusText.textContent = "雙方請在左側棋盤部署 5 艘軍艦";
+        }
+        renderShipSelector();
+      } else if (data.phase === "playing") {
+        setupControls.classList.add("hidden");
+        postGameActions.classList.add("hidden");
+        const isMyTurn = data.turn === playerRole;
+        if (isMyTurn) {
+          statusBadge.className = "px-3 py-1 rounded-full text-xs font-bold bg-emerald-900/70 text-emerald-300 border border-emerald-500 animate-pulse";
+          statusBadge.textContent = "你的回合";
+          if (data.ruleMode === "salvo") {
+            const req = getRequiredSalvoCount();
+            statusText.textContent = `齊射回合！請在右側雷達點選 ${req} 個目標後按下「確認齊射」`;
+          } else {
+            statusText.textContent = "輪到你開火！請點擊右側【敵方雷達】選擇座標";
+          }
+        } else {
+          salvoQueue = [];
+          statusBadge.className = "px-3 py-1 rounded-full text-xs font-bold bg-slate-800 text-slate-400 border border-slate-700";
+          statusBadge.textContent = "敵方回合";
+          statusText.textContent = `等待「${opp?.name || "對手"}」瞄準開火...`;
+        }
+      } else if (data.phase === "finished") {
+        setupControls.classList.add("hidden");
+        postGameActions.classList.remove("hidden");
+        salvoQueue = [];
+        const iWon = data.winner === playerRole;
+        statusBadge.className = iWon
+          ? "px-3 py-1 rounded-full text-xs font-bold bg-amber-500/20 text-amber-300 border border-amber-400"
+          : "px-3 py-1 rounded-full text-xs font-bold bg-rose-900/60 text-rose-300 border border-rose-700";
+        statusBadge.textContent = iWon ? "勝利 🎉" : "戰敗 💀";
+        statusText.textContent = iWon ? "恭喜！你成功全殲了敵方艦隊！" : "我方艦隊已全數沉沒，敵方剩餘船艦已標示於右盤。";
+      }
+
+      updateSalvoUI();
+      renderBoards();
+    }
+
+    function enterRoomListener(code, role) {
+      roomCode = code;
+      playerRole = role;
+      placedShips = {};
+      selectedShipId = "carrier";
+      salvoQueue = [];
+      lastResetToken = null;
+
+      document.getElementById("roomHeaderInfo").classList.remove("hidden");
+      buildBoardsDOM();
+
+      const roomRef = doc(db, COLLECTION_NAME, roomCode);
+      if (unsubRoom) unsubRoom();
+      unsubRoom = onSnapshot(roomRef, (snap) => {
+        if (!snap.exists()) {
+          alert("房間已關閉或不存在");
+          window.leaveRoom();
+          return;
+        }
+        handleRoomSnapshot(snap.data());
+      });
+    }
+
+    // 大廳：建立房間 -> 進入等待室
+    window.createRoom = async function () {
+      if (!initFirebase()) return;
+      const errEl = document.getElementById("lobbyError");
+      errEl.textContent = "";
+
+      const name = document.getElementById("playerNameInput").value.trim() || "房主艦長";
+      const code = Math.floor(1000 + Math.random() * 9000).toString();
+
+      try {
+        const roomRef = doc(db, COLLECTION_NAME, code);
+        await setDoc(roomRef, {
+          roomCode: code,
+          phase: "waiting",
+          ruleMode: "normal",
+          turn: null,
+          winner: null,
+          resetToken: Date.now(),
+          lastLog: "等待室已建立。",
+          host: { name, ready: false, ships: [], shots: [] },
+          guest: null,
+          createdAt: Date.now()
+        });
+        enterRoomListener(code, "host");
+      } catch (e) {
+        console.error(e);
+        errEl.textContent = "建立房間失敗，請檢查 Firebase 設定或網路連線。";
+      }
+    };
+
+    // 大廳：輸入房號加入 -> 進入等待室
+    window.joinRoom = async function () {
+      if (!initFirebase()) return;
+      const errEl = document.getElementById("lobbyError");
+      errEl.textContent = "";
+
+      const code = document.getElementById("joinCodeInput").value.trim();
+      if (!/^\d{4}$/.test(code)) {
+        errEl.textContent = "請輸入正確的 4 碼數字房號。";
+        return;
+      }
+
+      const name = document.getElementById("playerNameInput").value.trim() || "挑戰者艦長";
+      try {
+        const roomRef = doc(db, COLLECTION_NAME, code);
+        const snap = await getDoc(roomRef);
+        if (!snap.exists()) {
+          errEl.textContent = "找不到此房號，請確認是否輸入正確。";
+          return;
+        }
+        const data = snap.data();
+        if (data.guest) {
+          errEl.textContent = "此房間人數已滿（限 2 人對戰）。";
+          return;
+        }
+
+        await updateDoc(roomRef, {
+          guest: { name, ready: false, ships: [], shots: [] }
+        });
+        enterRoomListener(code, "guest");
+      } catch (e) {
+        console.error(e);
+        errEl.textContent = "加入房間失敗，請檢查 Firebase 權限設定。";
+      }
+    };
+
+    // 結算選項 1：原規則再一局（直接重置並進入佈陣）
+    window.rematchSameRules = async function () {
+      if (!roomCode || !currentRoomData) return;
+      const roomRef = doc(db, COLLECTION_NAME, roomCode);
+      await updateDoc(roomRef, {
+        phase: "setup",
+        turn: null,
+        winner: null,
+        resetToken: Date.now(),
+        lastLog: `🔄 原規則再一局（${RULE_LABELS[currentRoomData.ruleMode]}）！請重新部署艦隊。`,
+        "host.ready": false,
+        "host.ships": [],
+        "host.shots": [],
+        "guest.ready": false,
+        "guest.ships": [],
+        "guest.shots": []
+      });
+    };
+
+    // 結算選項 2：回等待室（可重新選擇模式）
+    window.returnToWaitingRoom = async function () {
+      if (!roomCode || !currentRoomData) return;
+      const roomRef = doc(db, COLLECTION_NAME, roomCode);
+      await updateDoc(roomRef, {
+        phase: "waiting",
+        turn: null,
+        winner: null,
+        resetToken: Date.now(),
+        lastLog: "返回等待室。",
+        "host.ready": false,
+        "host.ships": [],
+        "host.shots": [],
+        "guest.ready": false,
+        "guest.ships": [],
+        "guest.shots": []
+      });
+    };
+
+    // 離開房間回大廳
+    window.leaveRoom = function () {
+      if (unsubRoom) {
+        unsubRoom();
+        unsubRoom = null;
+      }
+      roomCode = null;
+      playerRole = null;
+      currentRoomData = null;
+      placedShips = {};
+      salvoQueue = [];
+
+      document.getElementById("waitingView").classList.add("hidden");
+      document.getElementById("gameView").classList.add("hidden");
+      document.getElementById("roomHeaderInfo").classList.add("hidden");
+      document.getElementById("lobbyView").classList.remove("hidden");
+    };
+  </script>
+</body>
+</html>
